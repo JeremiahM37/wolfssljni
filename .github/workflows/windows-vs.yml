@@ -602,6 +602,22 @@ jobs:
           Write-Output "Checking for generated DLL files..."
           Get-ChildItem . -Filter "*.dll" -Recurse | Select-Object FullName, Length
 
+      - name: Generate JNI headers before DLL build
+        run: |
+          Write-Output "Generating JNI headers from Java source..."
+          cd wolfssljni
+
+          # First compile Java sources to generate .class files
+          Write-Output "Compiling Java sources..."
+          & ant compile-nativeheaderdir compile-javah
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "Java compilation failed"
+            throw "Failed to compile Java sources for header generation"
+          }
+
+          Write-Output "JNI headers generated successfully"
+
       - name: Build wolfSSL JNI DLL (x64 DLL Release)
         run: |
           Write-Output "Building wolfSSL JNI DLL..."
