@@ -274,7 +274,9 @@ jobs:
           $content = Get-Content $userSettingsPath -Raw
           Write-Output "Original file size: $($content.Length) characters"
 
-          $newDefines = "#define WOLFSSL_JNI`n#define WOLFSSL_KEY_GEN`n#define HAVE_CRL`n#define OPENSSL_ALL`n#define WOLFSSL_SHA224`n#define HAVE_FFDHE_2048`n#define HAVE_FFDHE_3072`n#define HAVE_FFDHE_4096`n#define HAVE_FFDHE_Q`n#define WOLFSSL_VALIDATE_FFC_IMPORT`n#define WOLFSSL_CERT_GEN`n#define WOLFSSL_CERT_REQ`n#define WOLFSSL_CERT_EXT`n#define WOLFSSL_ASN_TEMPLATE`n#define HAVE_CRL_MONITOR`n#define HAVE_SNI`n#define HAVE_ALPN`n`n"
+          # Note: WOLFSSL_JNI enables wolfSSL JNI support functions (wolfSSL_get_jobject, etc)
+          # but may also enable old deprecated JNI code. We need it for the core JNI functions.
+          $newDefines = "#define WOLFSSL_JNI`n#define KEEP_OUR_CERT`n#define KEEP_PEER_CERT`n#define WOLFSSL_KEY_GEN`n#define HAVE_CRL`n#define OPENSSL_ALL`n#define WOLFSSL_SHA224`n#define HAVE_FFDHE_2048`n#define HAVE_FFDHE_3072`n#define HAVE_FFDHE_4096`n#define HAVE_FFDHE_Q`n#define WOLFSSL_VALIDATE_FFC_IMPORT`n#define WOLFSSL_CERT_GEN`n#define WOLFSSL_CERT_REQ`n#define WOLFSSL_CERT_EXT`n#define WOLFSSL_ASN_TEMPLATE`n#define HAVE_CRL_MONITOR`n#define HAVE_SNI`n#define HAVE_ALPN`n`n"
 
           # Try multiple possible insertion points
           $insertPoints = @(
