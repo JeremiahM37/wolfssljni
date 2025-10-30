@@ -669,7 +669,7 @@ jobs:
             }
           }
 
-      - name: Setup environment for JAR build and tests
+      - name: Setup environment for tests
         run: |
           Write-Output "Verifying test environment setup..."
 
@@ -713,25 +713,6 @@ jobs:
           }
 
           Write-Output "All required JUnit dependencies verified"
-
-      - name: Rebuild Java JAR after DLL build
-        run: |
-          Write-Output "Rebuilding Java JAR to ensure consistency with native DLL..."
-          cd wolfssljni
-
-          # Show JUNIT_HOME again to verify it's still set
-          Write-Output "JUNIT_HOME for JAR build: $env:JUNIT_HOME"
-
-          # Clean and rebuild to ensure JAR matches the DLL
-          & ant clean
-          & ant
-
-          if ($LASTEXITCODE -ne 0) {
-            Write-Output "JAR rebuild failed with exit code $LASTEXITCODE"
-            throw "Failed to rebuild Java JAR files"
-          }
-
-          Write-Output "Java JAR files rebuilt successfully"
 
       - name: Run JUnit tests (Windows x64 Release)
         run: |
