@@ -606,6 +606,13 @@ jobs:
           Write-Output "Building wolfSSL JNI DLL..."
           cd wolfssljni\IDE\WIN
 
+          # Ensure environment variables are set for the post-build ant step
+          # Note: The post-build event will override JUNIT_HOME, but ANT_HOME and JAVA_HOME should work
+          Write-Output "Environment for post-build:"
+          Write-Output "  JAVA_HOME: $env:JAVA_HOME"
+          Write-Output "  ANT_HOME: $env:ANT_HOME"
+          Write-Output "  JUNIT_HOME: $env:JUNIT_HOME"
+
           # Capture build output for better error reporting
           $buildLog = "wolfssljni_build.log"
           msbuild wolfssljni.sln -p:Configuration="DLL Release" -p:Platform=x64 -verbosity:minimal -nologo -flp:logfile=$buildLog
@@ -664,41 +671,21 @@ jobs:
             }
           }
 
-      - name: Setup environment for tests
+      - name: Rebuild Java JAR after DLL build
         run: |
-          Write-Output "Setting up test environment..."
-
-          # Verify Ant installation
-          & ant -version
-          if ($LASTEXITCODE -ne 0) {
-            throw "Ant is not properly installed"
-          }
-
-          # Verify Java installation
-          & java -version
-          if ($LASTEXITCODE -ne 0) {
-            throw "Java is not properly installed"
-          }
-
-          # Show environment variables
-          Write-Output "Environment variables:"
-          Write-Output "JAVA_HOME: $env:JAVA_HOME"
-          Write-Output "ANT_HOME: $env:ANT_HOME"
-          Write-Output "JUNIT_HOME: $env:JUNIT_HOME"
-
-      - name: Build JAR (ant)
-        run: |
-          Write-Output "Building Java JAR files..."
+          Write-Output "Rebuilding Java JAR to ensure consistency with native DLL..."
           cd wolfssljni
 
+          # Clean and rebuild to ensure JAR matches the DLL
+          & ant clean
           & ant
 
           if ($LASTEXITCODE -ne 0) {
-            Write-Output "Ant build failed with exit code $LASTEXITCODE"
-            throw "Failed to build Java JAR files"
+            Write-Output "JAR rebuild failed with exit code $LASTEXITCODE"
+            throw "Failed to rebuild Java JAR files"
           }
 
-          Write-Output "Java JAR files built successfully"
+          Write-Output "Java JAR files rebuilt successfully"
 
       - name: Run JUnit tests (Windows x64 Release)
         run: |
