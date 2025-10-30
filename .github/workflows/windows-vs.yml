@@ -669,10 +669,58 @@ jobs:
             }
           }
 
+      - name: Setup environment for JAR build and tests
+        run: |
+          Write-Output "Verifying test environment setup..."
+
+          # Verify Ant installation
+          & ant -version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Ant is not properly installed"
+          }
+
+          # Verify Java installation
+          & java -version
+          if ($LASTEXITCODE -ne 0) {
+            throw "Java is not properly installed"
+          }
+
+          # Show and verify environment variables
+          Write-Output "Environment variables:"
+          Write-Output "JAVA_HOME: $env:JAVA_HOME"
+          Write-Output "ANT_HOME: $env:ANT_HOME"
+          Write-Output "JUNIT_HOME: $env:JUNIT_HOME"
+          Write-Output "GITHUB_WORKSPACE: ${{ github.workspace }}"
+
+          # Verify JUNIT_HOME is set and contains the required JARs
+          if ([string]::IsNullOrEmpty($env:JUNIT_HOME)) {
+            throw "JUNIT_HOME environment variable is not set"
+          }
+
+          if (-not (Test-Path "$env:JUNIT_HOME\junit-4.13.2.jar")) {
+            Write-Output "ERROR: junit-4.13.2.jar not found at $env:JUNIT_HOME"
+            Write-Output "Contents of JUNIT_HOME directory:"
+            if (Test-Path $env:JUNIT_HOME) {
+              Get-ChildItem $env:JUNIT_HOME
+            } else {
+              Write-Output "JUNIT_HOME directory does not exist!"
+            }
+            throw "JUnit JAR not found"
+          }
+
+          if (-not (Test-Path "$env:JUNIT_HOME\hamcrest-all-1.3.jar")) {
+            throw "hamcrest-all-1.3.jar not found at $env:JUNIT_HOME"
+          }
+
+          Write-Output "All required JUnit dependencies verified"
+
       - name: Rebuild Java JAR after DLL build
         run: |
           Write-Output "Rebuilding Java JAR to ensure consistency with native DLL..."
           cd wolfssljni
+
+          # Show JUNIT_HOME again to verify it's still set
+          Write-Output "JUNIT_HOME for JAR build: $env:JUNIT_HOME"
 
           # Clean and rebuild to ensure JAR matches the DLL
           & ant clean
@@ -690,11 +738,49 @@ jobs:
           Write-Output "Running JUnit tests..."
           cd wolfssljni
 
+          # Verify environment one more time before tests
+          Write-Output "Pre-test environment check:"
+          Write-Output "JUNIT_HOME: $env:JUNIT_HOME"
+          Write-Output "JAVA_HOME: $env:JAVA_HOME"
+
+          # Verify JARs exist
+          Write-Output "Checking for wolfSSL JARs..."
+          if (Test-Path "lib\wolfssl.jar") {
+            $jarSize = (Get-Item "lib\wolfssl.jar").Length
+            Write-Output "  wolfssl.jar: EXISTS ($jarSize bytes)"
+          } else {
+            Write-Output "  wolfssl.jar: MISSING"
+          }
+
+          if (Test-Path "lib\wolfssl-jsse.jar") {
+            $jarSize = (Get-Item "lib\wolfssl-jsse.jar").Length
+            Write-Output "  wolfssl-jsse.jar: EXISTS ($jarSize bytes)"
+          } else {
+            Write-Output "  wolfssl-jsse.jar: MISSING"
+          }
+
+          # Verify DLLs are in expected location
+          Write-Output "Checking for DLL files..."
+          if (Test-Path "IDE\WIN\DLL Release\x64\wolfssljni.dll") {
+            $dllSize = (Get-Item "IDE\WIN\DLL Release\x64\wolfssljni.dll").Length
+            Write-Output "  wolfssljni.dll: EXISTS ($dllSize bytes)"
+          } else {
+            Write-Output "  wolfssljni.dll: MISSING from expected location"
+          }
+
+          if (Test-Path "..\wolfssl\DLL Release\x64\wolfssl.dll") {
+            $dllSize = (Get-Item "..\wolfssl\DLL Release\x64\wolfssl.dll").Length
+            Write-Output "  wolfssl.dll: EXISTS ($dllSize bytes)"
+          } else {
+            Write-Output "  wolfssl.dll: MISSING from expected location"
+          }
+
           # Show available ant targets first
-          Write-Output "Available Ant targets:"
+          Write-Output "`nAvailable Ant targets:"
           & ant -projecthelp
 
           # Run the tests
+          Write-Output "`nStarting tests with: ant test-win64-release"
           & ant test-win64-release
 
           if ($LASTEXITCODE -ne 0) {
