@@ -714,6 +714,23 @@ jobs:
 
           Write-Output "All required JUnit dependencies verified"
 
+          # Clean any existing build artifacts to ensure fresh build with correct JUNIT_HOME
+          Write-Output "`nCleaning existing build artifacts..."
+          cd wolfssljni
+          if (Test-Path "build") {
+            Write-Output "Removing build directory..."
+            Remove-Item -Path "build" -Recurse -Force
+          }
+          if (Test-Path "lib\wolfssl.jar") {
+            Write-Output "Removing lib\wolfssl.jar..."
+            Remove-Item -Path "lib\wolfssl.jar" -Force
+          }
+          if (Test-Path "lib\wolfssl-jsse.jar") {
+            Write-Output "Removing lib\wolfssl-jsse.jar..."
+            Remove-Item -Path "lib\wolfssl-jsse.jar" -Force
+          }
+          Write-Output "Clean complete - ready for fresh build with correct environment"
+
       - name: Run JUnit tests (Windows x64 Release)
         run: |
           Write-Output "Running JUnit tests..."
