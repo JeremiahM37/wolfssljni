@@ -608,16 +608,13 @@ jobs:
           Write-Output "Building wolfSSL JNI DLL..."
           cd wolfssljni\IDE\WIN
 
-          # Ensure environment variables are set for the post-build ant step
-          # Note: The post-build event will override JUNIT_HOME, but ANT_HOME and JAVA_HOME should work
-          Write-Output "Environment for post-build:"
-          Write-Output "  JAVA_HOME: $env:JAVA_HOME"
-          Write-Output "  ANT_HOME: $env:ANT_HOME"
-          Write-Output "  JUNIT_HOME: $env:JUNIT_HOME"
+          # Disable post-build event by passing a property
+          # This prevents the post-build ant from running with wrong JUNIT_HOME
+          Write-Output "Building DLL without post-build event..."
 
           # Capture build output for better error reporting
           $buildLog = "wolfssljni_build.log"
-          msbuild wolfssljni.sln -p:Configuration="DLL Release" -p:Platform=x64 -verbosity:minimal -nologo -flp:logfile=$buildLog
+          msbuild wolfssljni.sln -p:Configuration="DLL Release" -p:Platform=x64 -p:RunPostBuildEvent=Never -verbosity:minimal -nologo -flp:logfile=$buildLog
 
           if ($LASTEXITCODE -ne 0) {
             Write-Output "Build failed with exit code: $LASTEXITCODE"
