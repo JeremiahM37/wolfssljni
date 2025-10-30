@@ -686,6 +686,20 @@ jobs:
           Write-Output "ANT_HOME: $env:ANT_HOME"
           Write-Output "JUNIT_HOME: $env:JUNIT_HOME"
 
+      - name: Build JAR (ant)
+        run: |
+          Write-Output "Building Java JAR files..."
+          cd wolfssljni
+
+          & ant
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "Ant build failed with exit code $LASTEXITCODE"
+            throw "Failed to build Java JAR files"
+          }
+
+          Write-Output "Java JAR files built successfully"
+
       - name: Run JUnit tests (Windows x64 Release)
         run: |
           Write-Output "Running JUnit tests..."
