@@ -742,6 +742,34 @@ jobs:
 
           Write-Output "All required JUnit dependencies verified"
 
+          # Add DLL directories to PATH so tests can find the native libraries
+          Write-Output "`nConfiguring PATH for native library loading..."
+          $wolfsslDllPath = "${{ github.workspace }}\wolfssl\DLL Release\x64"
+          $wolfssljniDllPath = "${{ github.workspace }}\wolfssljni\IDE\WIN\DLL Release\x64"
+
+          Write-Output "Adding to PATH:"
+          Write-Output "  wolfSSL DLL: $wolfsslDllPath"
+          Write-Output "  wolfSSL JNI DLL: $wolfssljniDllPath"
+
+          # Verify DLLs exist before adding to PATH
+          if (Test-Path "$wolfsslDllPath\wolfssl.dll") {
+            Write-Output "  Verified: wolfssl.dll exists"
+          } else {
+            Write-Output "  WARNING: wolfssl.dll not found at $wolfsslDllPath"
+          }
+
+          if (Test-Path "$wolfssljniDllPath\wolfssljni.dll") {
+            Write-Output "  Verified: wolfssljni.dll exists"
+          } else {
+            Write-Output "  WARNING: wolfssljni.dll not found at $wolfssljniDllPath"
+          }
+
+          # Add to PATH for this step and all subsequent steps
+          $env:PATH = "$wolfsslDllPath;$wolfssljniDllPath;$env:PATH"
+          echo "PATH=$wolfsslDllPath;$wolfssljniDllPath;$env:PATH" >> $env:GITHUB_ENV
+
+          Write-Output "PATH updated successfully"
+
           # Clean any existing build artifacts to ensure fresh build with correct JUNIT_HOME
           Write-Output "`nCleaning existing build artifacts..."
           cd wolfssljni
