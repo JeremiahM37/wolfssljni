@@ -607,16 +607,28 @@ jobs:
           Write-Output "Generating JNI headers from Java source..."
           cd wolfssljni
 
-          # First compile Java sources to generate .class files
-          Write-Output "Compiling Java sources..."
-          & ant compile-nativeheaderdir compile-javah
+          # Run init to create directories, then compile to generate headers
+          Write-Output "Initializing build directories and compiling Java sources..."
+          & ant init compile-nativeheaderdir compile-javah javah
 
           if ($LASTEXITCODE -ne 0) {
-            Write-Output "Java compilation failed"
-            throw "Failed to compile Java sources for header generation"
+            Write-Output "Java compilation/header generation failed"
+            throw "Failed to compile Java sources and generate JNI headers"
           }
 
-          Write-Output "JNI headers generated successfully"
+          # Verify headers were generated
+          Write-Output "Verifying JNI headers were generated..."
+          if (Test-Path "native\com_wolfssl_WolfSSL.h") {
+            Write-Output "JNI headers generated successfully"
+          } else {
+            Write-Output "WARNING: com_wolfssl_WolfSSL.h not found"
+          }
+
+          # Show what headers were generated
+          if (Test-Path "native") {
+            Write-Output "Generated header files:"
+            Get-ChildItem native -Filter "*.h" | Select-Object Name
+          }
 
       - name: Build wolfSSL JNI DLL (x64 DLL Release)
         run: |
