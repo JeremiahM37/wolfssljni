@@ -771,6 +771,37 @@ jobs:
           }
           Write-Output "Clean complete - ready for fresh build with correct environment"
 
+      - name: Build Java and JAR files
+        run: |
+          Write-Output "Building Java classes and JAR files..."
+          cd wolfssljni
+
+          # Build Java classes and create JARs (but don't run clean to preserve any existing builds)
+          Write-Output "Compiling Java sources..."
+          & ant init compile-nativeheaderdir compile-javah jar jar-jsse
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "Java build failed"
+            throw "Failed to compile Java and create JARs"
+          }
+
+          Write-Output "Java build completed successfully"
+
+          # Verify JARs were created
+          if (Test-Path "lib\wolfssl.jar") {
+            $jarSize = (Get-Item "lib\wolfssl.jar").Length
+            Write-Output "  wolfssl.jar created: $jarSize bytes"
+          } else {
+            throw "wolfssl.jar was not created"
+          }
+
+          if (Test-Path "lib\wolfssl-jsse.jar") {
+            $jarSize = (Get-Item "lib\wolfssl-jsse.jar").Length
+            Write-Output "  wolfssl-jsse.jar created: $jarSize bytes"
+          } else {
+            throw "wolfssl-jsse.jar was not created"
+          }
+
       - name: Run JUnit tests (Windows x64 Release)
         run: |
           Write-Output "Running JUnit tests..."
@@ -780,22 +811,6 @@ jobs:
           Write-Output "Pre-test environment check:"
           Write-Output "JUNIT_HOME: $env:JUNIT_HOME"
           Write-Output "JAVA_HOME: $env:JAVA_HOME"
-
-          # Verify JARs exist
-          Write-Output "Checking for wolfSSL JARs..."
-          if (Test-Path "lib\wolfssl.jar") {
-            $jarSize = (Get-Item "lib\wolfssl.jar").Length
-            Write-Output "  wolfssl.jar: EXISTS ($jarSize bytes)"
-          } else {
-            Write-Output "  wolfssl.jar: MISSING"
-          }
-
-          if (Test-Path "lib\wolfssl-jsse.jar") {
-            $jarSize = (Get-Item "lib\wolfssl-jsse.jar").Length
-            Write-Output "  wolfssl-jsse.jar: EXISTS ($jarSize bytes)"
-          } else {
-            Write-Output "  wolfssl-jsse.jar: MISSING"
-          }
 
           # Verify DLLs are in expected location
           Write-Output "Checking for DLL files..."
@@ -813,13 +828,18 @@ jobs:
             Write-Output "  wolfssl.dll: MISSING from expected location"
           }
 
-          # Show available ant targets first
-          Write-Output "`nAvailable Ant targets:"
-          & ant -projecthelp
+          # Build test classes
+          Write-Output "`nBuilding test classes..."
+          & ant build-test
 
-          # Run the tests
-          Write-Output "`nStarting tests with: ant test-win64-release"
-          & ant test-win64-release
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "Test build failed"
+            throw "Failed to compile test classes"
+          }
+
+          # Run tests directly using junit without rebuilding everything
+          Write-Output "`nRunning JUnit tests..."
+          & ant setup-win64-release test
 
           if ($LASTEXITCODE -ne 0) {
             Write-Output "Tests failed with exit code $LASTEXITCODE"
