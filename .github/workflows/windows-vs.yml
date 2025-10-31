@@ -305,10 +305,16 @@ jobs:
             Write-Output "Appended defines to end of file"
           }
 
-          # Verify the changes
+          # Verify the changes and disable DTLS by commenting out the defines
           $newContent = Get-Content $userSettingsPath -Raw
           if ($newContent.Contains("WOLFSSL_KEY_GEN")) {
             Write-Output "Configuration added successfully"
+
+            # Now comment out DTLS defines to disable DTLS
+            Write-Output "Disabling DTLS by commenting out WOLFSSL_DTLS defines..."
+            $newContent = $newContent -replace '(?m)^(\s*#define\s+WOLFSSL_DTLS13?\s*)$', '/* $1 */ // Disabled for JNI compatibility'
+            Set-Content -Path $userSettingsPath -Value $newContent -Encoding UTF8
+            Write-Output "DTLS defines disabled"
 
             # Show the first 100 lines of the modified file for debugging
             Write-Output "`nFirst 100 lines of modified user_settings.h:"
