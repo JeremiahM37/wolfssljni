@@ -73,6 +73,11 @@ public class WolfSSLImplementSSLSession extends ExtendedSSLSession {
     byte[] pseudoSessionID = null; /* used with TLS 1.3*/
     private int side = 0;
 
+    /* Tracks if client authentication was requested/required.
+     * On server side, if this is false, getPeerCertificates() should
+     * throw SSLPeerUnverifiedException since no client cert is expected. */
+    private boolean clientAuthRequested = false;
+
     /* Cache peer certificates after received. Applications assume that
      * SSLSocket.getSession().getPeerCertificates() will return the peer
      * certificate even on a resumed connection where the cert has not been
@@ -519,6 +524,17 @@ public class WolfSSLImplementSSLSession extends ExtendedSSLSession {
                 "SSLSocket/Engine closed");
         }
 
+        /* On server side, if client auth was not requested, there should be
+         * no peer certificate. Throw SSLPeerUnverifiedException to match
+         * SunJSSE behavior. */
+        if (this.side == WolfSSL.WOLFSSL_SERVER_END && !this.clientAuthRequested) {
+            WolfSSLDebug.log(getClass(), WolfSSLDebug.INFO,
+                () -> "Server side with no client auth, throwing " +
+                "SSLPeerUnverifiedException");
+            throw new SSLPeerUnverifiedException(
+                "peer not authenticated (no client auth requested)");
+        }
+
         try {
             x509 = this.ssl.getPeerCertificate();
         } catch (IllegalStateException | WolfSSLJNIException ex) {
@@ -615,10 +631,18 @@ public class WolfSSLImplementSSLSession extends ExtendedSSLSession {
             throw new SSLPeerUnverifiedException("handshake not done");
         }
 
+        /* On server side, if client auth was not requested, there should be
+         * no peer certificate. Throw SSLPeerUnverifiedException to match
+         * SunJSSE behavior. */
+        if (this.side == WolfSSL.WOLFSSL_SERVER_END && !this.clientAuthRequested) {
+            throw new SSLPeerUnverifiedException(
+                "peer not authenticated (no client auth requested)");
+        }
+
         try {
             peerX509 = this.ssl.getPeerCertificate();
             if (peerX509 == 0) {
-                return null;
+                throw new SSLPeerUnverifiedException("No peer certificate");
             }
 
             /* wolfSSL starting with 5.3.0 returns a new WOLFSSL_X509
@@ -657,10 +681,18 @@ public class WolfSSLImplementSSLSession extends ExtendedSSLSession {
             throw new SSLPeerUnverifiedException("handshake not done");
         }
 
+        /* On server side, if client auth was not requested, there should be
+         * no peer certificate. Throw SSLPeerUnverifiedException to match
+         * SunJSSE behavior. */
+        if (this.side == WolfSSL.WOLFSSL_SERVER_END && !this.clientAuthRequested) {
+            throw new SSLPeerUnverifiedException(
+                "peer not authenticated (no client auth requested)");
+        }
+
         try {
             peerX509 = this.ssl.getPeerCertificate();
             if (peerX509 == 0) {
-                return null;
+                throw new SSLPeerUnverifiedException("No peer certificate");
             }
 
             /* wolfSSL starting with 5.3.0 returns a new WOLFSSL_X509
@@ -1037,6 +1069,26 @@ public class WolfSSLImplementSSLSession extends ExtendedSSLSession {
      */
     protected int getSide() {
         return this.side;
+    }
+
+    /**
+     * Set whether client authentication was requested/required.
+     * Used to properly handle getPeerCertificates() behavior on server side.
+     *
+     * @param requested true if client auth was requested (needClientAuth or
+     *                  wantClientAuth was true), false otherwise
+     */
+    protected void setClientAuthRequested(boolean requested) {
+        this.clientAuthRequested = requested;
+    }
+
+    /**
+     * Get whether client authentication was requested/required.
+     *
+     * @return true if client auth was requested, false otherwise
+     */
+    protected boolean getClientAuthRequested() {
+        return this.clientAuthRequested;
     }
 
     /**

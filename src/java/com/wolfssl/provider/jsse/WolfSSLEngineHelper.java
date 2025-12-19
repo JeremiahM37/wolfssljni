@@ -111,6 +111,10 @@ public class WolfSSLEngineHelper {
      * global reference allows the Java object to be garbage collected. */
     private WolfSSLInternalVerifyCb wicb = null;
 
+    /* Algorithm type of loaded private key (e.g., "RSA", "EC").
+     * Used to reorder cipher suites to prioritize compatible ciphers. */
+    private String loadedKeyAlgorithm = null;
+
     /**
      * Private helper method to get System and Security properties.
      * Called once up front by constructor.
@@ -373,9 +377,12 @@ public class WolfSSLEngineHelper {
                 throw new WolfSSLException("Failed to load private key " +
                     "buffer into WOLFSSL, err = " + ret);
             }
+            /* Store the key algorithm for cipher suite ordering */
+            this.loadedKeyAlgorithm = privKey.getAlgorithm();
             WolfSSLDebug.log(getClass(), WolfSSLDebug.INFO,
                     () -> "loaded private key from X509KeyManager " +
-                    "(alias: " + alias + ")");
+                    "(alias: " + alias + ", algorithm: " +
+                    this.loadedKeyAlgorithm + ")");
         } else {
             WolfSSLDebug.log(getClass(), WolfSSLDebug.INFO,
                     () -> "no private key found in X509KeyManager " +
@@ -744,7 +751,12 @@ public class WolfSSLEngineHelper {
                 return;
             }
 
-            for (String s : suites) {
+            /* Reorder cipher suites for proper TLS 1.3 and certificate type
+             * compatibility. TLS 1.3 ciphers should come first, followed by
+             * ciphers that match the loaded certificate key type. */
+            String[] reorderedSuites = reorderCipherSuites(suites);
+
+            for (String s : reorderedSuites) {
                 sb.append(s);
                 sb.append(":");
             }
@@ -767,6 +779,97 @@ public class WolfSSLEngineHelper {
         } catch (IllegalStateException e) {
             throw new IllegalArgumentException(e);
         }
+    }
+
+    /**
+     * Reorders cipher suites for optimal TLS negotiation.
+     *
+     * Ensures TLS 1.3 ciphers come first (they work with any cert type),
+     * followed by ciphers compatible with the loaded certificate's key type
+     * (RSA ciphers for RSA certs, ECDSA ciphers for EC certs).
+     *
+     * This fixes handshake failures that can occur when ECDSA ciphers are
+     * listed before RSA ciphers, but an RSA certificate is loaded.
+     *
+     * @param suites Original cipher suite array
+     * @return Reordered cipher suite array
+     */
+    private String[] reorderCipherSuites(String[] suites) {
+        if (suites == null || suites.length == 0) {
+            return suites;
+        }
+
+        List<String> tls13Ciphers = new ArrayList<>();
+        List<String> compatibleCiphers = new ArrayList<>();
+        List<String> otherCiphers = new ArrayList<>();
+
+        for (String cipher : suites) {
+            if (isTls13Cipher(cipher)) {
+                /* TLS 1.3 ciphers always go first */
+                tls13Ciphers.add(cipher);
+            } else if (isCipherCompatibleWithKeyType(cipher)) {
+                /* Ciphers matching loaded key type come next */
+                compatibleCiphers.add(cipher);
+            } else {
+                /* Other ciphers (mismatched key type) come last */
+                otherCiphers.add(cipher);
+            }
+        }
+
+        List<String> result = new ArrayList<>();
+        result.addAll(tls13Ciphers);
+        result.addAll(compatibleCiphers);
+        result.addAll(otherCiphers);
+
+        if (WolfSSLDebug.DEBUG) {
+            WolfSSLDebug.log(getClass(), WolfSSLDebug.INFO,
+                () -> "Reordered cipher suites for key algorithm: " +
+                loadedKeyAlgorithm);
+        }
+
+        return result.toArray(new String[0]);
+    }
+
+    /**
+     * Check if cipher is a TLS 1.3 cipher suite.
+     * TLS 1.3 ciphers use format TLS_AES_*, TLS_CHACHA20_*, etc.
+     */
+    private boolean isTls13Cipher(String cipher) {
+        return cipher != null && (
+            cipher.startsWith("TLS_AES_") ||
+            cipher.startsWith("TLS_CHACHA20_"));
+    }
+
+    /**
+     * Check if cipher is compatible with the loaded key type.
+     * Returns true if no key is loaded (allow all), or if cipher
+     * matches the key type.
+     */
+    private boolean isCipherCompatibleWithKeyType(String cipher) {
+        if (cipher == null) {
+            return false;
+        }
+
+        /* If no key loaded yet, or TLS 1.3 cipher (already handled above),
+         * consider it compatible */
+        if (this.loadedKeyAlgorithm == null) {
+            return true;
+        }
+
+        /* Check cipher compatibility based on key algorithm */
+        if ("RSA".equals(this.loadedKeyAlgorithm)) {
+            /* RSA key: compatible with ECDHE_RSA, DHE_RSA, RSA ciphers */
+            return cipher.contains("_RSA_") || cipher.contains("_RSA ") ||
+                   cipher.endsWith("_RSA") ||
+                   (cipher.startsWith("TLS_RSA_") || cipher.startsWith("SSL_RSA_"));
+        } else if ("EC".equals(this.loadedKeyAlgorithm)) {
+            /* EC key: compatible with ECDHE_ECDSA, ECDSA ciphers */
+            return cipher.contains("_ECDSA_") || cipher.contains("ECDSA") ||
+                   cipher.contains("_ECDH_");
+        }
+
+        /* Unknown key type, consider compatible */
+        return true;
     }
 
     /* sets the protocol to use with WOLFSSL connections */
@@ -1349,6 +1452,12 @@ public class WolfSSLEngineHelper {
             else {
                 this.session.setSessionContext(authStore.getServerContext());
                 this.session.setSide(WolfSSL.WOLFSSL_SERVER_END);
+                /* Set whether client auth was requested so session can properly
+                 * handle getPeerCertificates() behavior */
+                boolean clientAuthRequested =
+                    this.params.getNeedClientAuth() ||
+                    this.params.getWantClientAuth();
+                this.session.setClientAuthRequested(clientAuthRequested);
             }
 
             if (this.sessionCreation == false && !this.session.isFromTable) {
