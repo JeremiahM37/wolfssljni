@@ -762,10 +762,16 @@ public class WolfSSLAuthStore {
 
                     }
 
-                    if (in > 0 && diff > in) {
+                    if (in > 0 && diff >= in) {
                         current.invalidate();
                     }
-                    current.setNativeTimeout(in);
+                    try {
+                        current.setNativeTimeout(in);
+                    } catch (IllegalStateException e) {
+                        /* Native WolfSSLSession has been freed,
+                         * invalidate this session entry */
+                        current.invalidate();
+                    }
                 }
             }
         }

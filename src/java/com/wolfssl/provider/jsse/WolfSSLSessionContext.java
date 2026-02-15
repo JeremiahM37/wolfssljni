@@ -21,7 +21,10 @@
 
 package com.wolfssl.provider.jsse;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Enumeration;
+import java.util.List;
 import javax.net.ssl.SSLSession;
 import javax.net.ssl.SSLSessionContext;
 import com.wolfssl.WolfSSL;
@@ -83,7 +86,20 @@ public class WolfSSLSessionContext implements SSLSessionContext {
         if (store == null) {
             return null;
         }
-        return store.getSession(sessionId, side);
+        /* Actively invalidate any expired sessions before lookup */
+        if (this.sesTimout > 0) {
+            store.updateTimeouts(this.sesTimout, this.side);
+        }
+        WolfSSLImplementSSLSession session =
+            store.getSession(sessionId, side);
+        if (session == null) {
+            return null;
+        }
+        /* Filter out invalidated sessions */
+        if (!session.isValid()) {
+            return null;
+        }
+        return session;
     }
 
 
@@ -92,7 +108,25 @@ public class WolfSSLSessionContext implements SSLSessionContext {
         if (store == null) {
             return null;
         }
-        return store.getAllIDs(side);
+        /* Actively invalidate any expired sessions before returning IDs */
+        if (this.sesTimout > 0) {
+            store.updateTimeouts(this.sesTimout, this.side);
+        }
+        Enumeration<byte[]> allIds = store.getAllIDs(side);
+        if (allIds == null) {
+            return null;
+        }
+        /* Filter out invalidated sessions */
+        List<byte[]> validIds = new ArrayList<>();
+        while (allIds.hasMoreElements()) {
+            byte[] id = allIds.nextElement();
+            WolfSSLImplementSSLSession session =
+                store.getSession(id, side);
+            if (session != null && session.isValid()) {
+                validIds.add(id);
+            }
+        }
+        return Collections.enumeration(validIds);
     }
 
 

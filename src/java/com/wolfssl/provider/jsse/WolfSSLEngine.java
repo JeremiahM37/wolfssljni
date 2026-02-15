@@ -128,6 +128,15 @@ public class WolfSSLEngine extends SSLEngine {
      * inside SendAppData, of size SSLSession.getApplicationBufferSize() */
     private ByteBuffer staticAppDataBuf = null;
 
+    /* Intermediate buffer for BUFFER_OVERFLOW handling per JSSE SSLEngine
+     * contract. When ssl_read() decrypts data that exceeds output buffer
+     * capacity, the decrypted data is stashed here and the input position
+     * is restored to report consumed=0. On the next unwrap() call, stashed
+     * data is served directly without calling ssl_read(). */
+    private byte[] pendingAppData = null;
+    private int pendingAppDataLen = 0;
+    private int pendingNetConsumed = 0;
+
     /* Default size of internalIOSendBuf, 16k to match TLS record size.
      * TODO - add upper bound on I/O send buf resize allocations. */
     private static final int INTERNAL_IOSEND_BUF_SZ = 16 * 1024;
@@ -974,34 +983,28 @@ public class WolfSSLEngine extends SSLEngine {
         int ret = 0;
         int idx = 0; /* index into out[] array */
         final int err;
-        byte[] tmp = null;
 
         /* Calculate maximum output size across ByteBuffer arrays */
         maxOutSz = getTotalOutputSize(out, ofst, length);
 
+        /* Always read into intermediate byte[] buffer to detect
+         * BUFFER_OVERFLOW before writing to output per JSSE SSLEngine
+         * contract. Use applicationBufferSize to read the full TLS
+         * record's plaintext in one shot. */
+        int readSz = 16384; /* default max TLS record plaintext */
+        if (readSz < maxOutSz) {
+            readSz = maxOutSz;
+        }
+        byte[] tmp = new byte[readSz];
+
         synchronized (ioLock) {
             try {
-                /* If we only have one ByteBuffer, skip allocating
-                 * separate intermediate byte[] and write directly to underlying
-                 * ByteBuffer array */
-                if (out.length == 1) {
-                    ret = this.ssl.read(out[0], maxOutSz, 0);
-                    if ((ret < 0) &&
-                        (ssl.getError(ret) == WolfSSL.APP_DATA_READY)) {
-                        /* If DTLS, we may need to call SSL_read() again
-                         * right away again if app data was received */
-                        ret = this.ssl.read(out[0], maxOutSz, 0);
-                    }
-                }
-                else {
-                    tmp = new byte[maxOutSz];
-                    ret = this.ssl.read(tmp, maxOutSz);
-                    if ((ret < 0) &&
-                        (ssl.getError(ret) == WolfSSL.APP_DATA_READY)) {
-                        /* If DTLS, we may need to call SSL_read() again
-                         * right away again if app data was received */
-                        ret = this.ssl.read(tmp, maxOutSz);
-                    }
+                ret = this.ssl.read(tmp, readSz);
+                if ((ret < 0) &&
+                    (ssl.getError(ret) == WolfSSL.APP_DATA_READY)) {
+                    /* If DTLS, we may need to call SSL_read() again
+                     * right away again if app data was received */
+                    ret = this.ssl.read(tmp, readSz);
                 }
             } catch (SocketTimeoutException | SocketException e) {
                 throw new SSLException(e);
@@ -1072,32 +1075,38 @@ public class WolfSSLEngine extends SSLEngine {
             }
         }
         else {
-            if (out.length == 1) {
-                totalRead = ret;
+            if (ret > maxOutSz) {
+                /* Decrypted data exceeds output buffer capacity. Stash
+                 * for serving on next unwrap() call. Caller will restore
+                 * input position and return BUFFER_OVERFLOW per JSSE
+                 * contract (consumed=0, produced=0). */
+                this.pendingAppData = new byte[ret];
+                System.arraycopy(tmp, 0, this.pendingAppData, 0, ret);
+                this.pendingAppDataLen = ret;
+                return 0; /* 0 bytes written to output */
             }
-            else {
-                /* write processed data into output buffers */
-                for (i = 0; i < ret;) {
-                    if (idx + ofst >= length) {
-                        /* no more output buffers left */
-                        break;
-                    }
 
-                    bufSpace = out[idx + ofst].remaining();
-                    if (bufSpace == 0) {
-                        /* no more space in current out buffer, advance */
-                        idx++;
-                        continue;
-                    }
+            /* Copy from intermediate buffer to output buffers */
+            for (i = 0; i < ret;) {
+                if (idx + ofst >= length) {
+                    /* no more output buffers left */
+                    break;
+                }
 
-                    sz = (bufSpace >= (ret - i)) ? (ret - i) : bufSpace;
-                    out[idx + ofst].put(tmp, i, sz);
-                    i += sz;
-                    totalRead += sz;
+                bufSpace = out[idx + ofst].remaining();
+                if (bufSpace == 0) {
+                    /* no more space in current out buffer, advance */
+                    idx++;
+                    continue;
+                }
 
-                    if ((ret - i) > 0) {
-                        idx++; /* go to next output buffer */
-                    }
+                sz = (bufSpace >= (ret - i)) ? (ret - i) : bufSpace;
+                out[idx + ofst].put(tmp, i, sz);
+                i += sz;
+                totalRead += sz;
+
+                if ((ret - i) > 0) {
+                    idx++; /* go to next output buffer */
                 }
             }
         }
@@ -1275,13 +1284,79 @@ public class WolfSSLEngine extends SSLEngine {
                         ret = DoHandshake(false);
                     }
                     else {
+                        /* Pre-check: BUFFER_UNDERFLOW detection for TLS.
+                         * Parse TLS record header to determine if input
+                         * contains a complete record. If not, return
+                         * BUFFER_UNDERFLOW immediately without consuming
+                         * any input (per JSSE SSLEngine contract). */
+                        boolean bufferUnderflow = false;
+                        if (inRemaining > 0 && (this.ssl.dtls() == 0)) {
+                            synchronized (netDataLock) {
+                                int pos = in.position();
+                                if (inRemaining < 5) {
+                                    /* Not enough for TLS record header */
+                                    bufferUnderflow = true;
+                                } else {
+                                    /* Peek at record length from header
+                                     * bytes 3-4 (big-endian) */
+                                    int recLen =
+                                        ((in.get(pos + 3) & 0xFF) << 8)
+                                      | (in.get(pos + 4) & 0xFF);
+                                    if (inRemaining < 5 + recLen) {
+                                        bufferUnderflow = true;
+                                    }
+                                }
+                            }
+                        }
+
+                        /* Check for pending stashed data from previous
+                         * BUFFER_OVERFLOW. Serve it directly without calling
+                         * ssl_read (data was already decrypted). */
+                        if (this.pendingAppData != null &&
+                                this.pendingAppDataLen > 0) {
+                            int outputSpace = getTotalOutputSize(out, ofst,
+                                length);
+                            if (outputSpace >= this.pendingAppDataLen) {
+                                /* Serve stashed data to output buffers */
+                                int idx2 = 0;
+                                for (int pos = 0;
+                                        pos < this.pendingAppDataLen;) {
+                                    if (idx2 + ofst >= length) break;
+                                    int space =
+                                        out[idx2 + ofst].remaining();
+                                    if (space == 0) { idx2++; continue; }
+                                    int sz2 = Math.min(space,
+                                        this.pendingAppDataLen - pos);
+                                    out[idx2 + ofst].put(
+                                        this.pendingAppData, pos, sz2);
+                                    pos += sz2;
+                                    if (pos < this.pendingAppDataLen) idx2++;
+                                }
+                                produced += this.pendingAppDataLen;
+                                /* Advance input position to account for
+                                 * bytes consumed by native wolfSSL during
+                                 * the previous stash call */
+                                synchronized (netDataLock) {
+                                    in.position(in.position() +
+                                        this.pendingNetConsumed);
+                                }
+                                this.pendingAppData = null;
+                                this.pendingAppDataLen = 0;
+                                this.pendingNetConsumed = 0;
+                            }
+                            else {
+                                /* Still not enough output space */
+                                status =
+                                    SSLEngineResult.Status.BUFFER_OVERFLOW;
+                            }
+                        }
+                        else if (bufferUnderflow) {
+                            status = SSLEngineResult.Status.BUFFER_UNDERFLOW;
+                        }
                         /* If we have input data, make sure output buffer
                          * length is greater than zero, otherwise ask app to
-                         * expand out buffer. There may be edge cases where
-                         * this could be tightened up, but this will err on
-                         * the side of giving us more output space than we
-                         * need. */
-                        if (inRemaining > 0 &&
+                         * expand out buffer. */
+                        else if (inRemaining > 0 &&
                             getTotalOutputSize(out, ofst, length) == 0) {
                             status = SSLEngineResult.Status.BUFFER_OVERFLOW;
                         }
@@ -1298,40 +1373,57 @@ public class WolfSSLEngine extends SSLEngine {
                                 produced += ret;
                             }
 
-                            /* Check for BUFFER_OVERFLOW status. This can
-                             * happen if we have data cached internally
-                             * (in.remaining()) and there is no more output
-                             * space. */
-                            synchronized (netDataLock) {
-                                if (ret == 0 && in.remaining() > 0 &&
-                                    getTotalOutputSize(out, ofst,
-                                        length) == 0) {
-                                    /* We have more data to read, but no more
-                                     * out space left in ByteBuffer[], ask for
-                                     * more */
-                                    status =
-                                        SSLEngineResult.Status.BUFFER_OVERFLOW;
+                            /* Check if RecvAppData stashed data because
+                             * output was too small. Restore input position
+                             * and return BUFFER_OVERFLOW per JSSE contract
+                             * (consumed=0, produced=0). */
+                            if (this.pendingAppData != null) {
+                                synchronized (netDataLock) {
+                                    this.pendingNetConsumed =
+                                        in.position() - inPosition;
+                                    in.position(inPosition);
                                 }
+                                produced = 0;
+                                status =
+                                    SSLEngineResult.Status.BUFFER_OVERFLOW;
                             }
+                            else {
+                                /* Check for BUFFER_OVERFLOW status. This can
+                                 * happen if we have data cached internally
+                                 * (in.remaining()) and there is no more
+                                 * output space. */
+                                synchronized (netDataLock) {
+                                    if (ret == 0 && in.remaining() > 0 &&
+                                        getTotalOutputSize(out, ofst,
+                                            length) == 0) {
+                                        /* We have more data to read, but
+                                         * no more out space left in
+                                         * ByteBuffer[], ask for more */
+                                        status = SSLEngineResult.Status.
+                                            BUFFER_OVERFLOW;
+                                    }
+                                }
 
-                            /* Check for BUFFER_OVERFLOW using ssl.pending().
-                             * For DTLS only. */
-                            if (status == SSLEngineResult.Status.OK) {
-                                synchronized (ioLock) {
-                                    try {
-                                        if (this.ssl.dtls() == 1) {
-                                            int pending = this.ssl.pending();
-                                            if (pending > 0) {
-                                                status =
-                                                    SSLEngineResult.Status.
-                                                    BUFFER_OVERFLOW;
+                                /* Check for BUFFER_OVERFLOW using
+                                 * ssl.pending(). For DTLS only. */
+                                if (status == SSLEngineResult.Status.OK) {
+                                    synchronized (ioLock) {
+                                        try {
+                                            if (this.ssl.dtls() == 1) {
+                                                int pending =
+                                                    this.ssl.pending();
+                                                if (pending > 0) {
+                                                    status =
+                                                        SSLEngineResult.
+                                                        Status.BUFFER_OVERFLOW;
+                                                }
                                             }
+                                        } catch (Exception e) {
+                                            WolfSSLDebug.log(getClass(),
+                                                WolfSSLDebug.INFO,
+                                                () -> "Exception calling "
+                                                    + "ssl.pending(): " + e);
                                         }
-                                    } catch (Exception e) {
-                                        WolfSSLDebug.log(getClass(),
-                                            WolfSSLDebug.INFO,
-                                            () -> "Exception calling "
-                                                + "ssl.pending(): " + e);
                                     }
                                 }
                             }
@@ -1608,10 +1700,29 @@ public class WolfSSLEngine extends SSLEngine {
                     this.internalIOSendBufOffset > 0) {
                     hs = SSLEngineResult.HandshakeStatus.NEED_WRAP;
                 }
-                /* close_notify received, need to send one back */
+                /* outbound closed by application, need to generate and
+                 * send close_notify. Check this BEFORE the TLS 1.3
+                 * unidirectional check below, since explicit closeOutbound()
+                 * means the app wants to send close_notify regardless. */
+                else if (!this.outBoundOpen && !this.closeNotifySent) {
+                    hs = SSLEngineResult.HandshakeStatus.NEED_WRAP;
+                }
+                /* close_notify received but outbound still open - peer
+                 * initiated shutdown. In TLS 1.3 (RFC 8446 Section 6.1),
+                 * close_notify is unidirectional - the recipient is NOT
+                 * required to send one back. Return NOT_HANDSHAKING to
+                 * match SunJSSE behavior. TLS 1.2 still requires
+                 * bidirectional close_notify exchange (NEED_WRAP). */
                 else if (this.closeNotifyReceived == true &&
                          this.closeNotifySent == false) {
-                    hs = SSLEngineResult.HandshakeStatus.NEED_WRAP;
+                    String proto =
+                        this.engineHelper.getSession().getProtocol();
+                    if (proto != null && proto.equals("TLSv1.3") &&
+                        this.outBoundOpen) {
+                        hs = SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING;
+                    } else {
+                        hs = SSLEngineResult.HandshakeStatus.NEED_WRAP;
+                    }
                 }
                 /* close_notify sent, need to read peer's */
                 else if (this.closeNotifySent == true &&
@@ -1620,13 +1731,24 @@ public class WolfSSLEngine extends SSLEngine {
                      * one. Denote that with NOT_HANDSHAKING here */
                     hs = SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING;
                 }
-                else if (!this.outBoundOpen && !this.closeNotifySent) {
-                    /* We just closed outBound, NEED_WRAP to generate and
-                     * send close_notify */
-                    hs = SSLEngineResult.HandshakeStatus.NEED_WRAP;
-                }
                 else {
                     hs = SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING;
+                }
+            }
+            else if (this.closeNotifyReceived == true &&
+                     this.closeNotifySent == false) {
+                /* TLS 1.3 close_notify is unidirectional, but only
+                 * return NOT_HANDSHAKING if the application has not
+                 * explicitly closed outbound (closeOutbound()). If
+                 * outbound was closed, NEED_WRAP to generate our own
+                 * close_notify. */
+                String proto =
+                    this.engineHelper.getSession().getProtocol();
+                if (proto != null && proto.equals("TLSv1.3") &&
+                    this.outBoundOpen) {
+                    hs = SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING;
+                } else {
+                    hs = SSLEngineResult.HandshakeStatus.NEED_WRAP;
                 }
             }
             else {

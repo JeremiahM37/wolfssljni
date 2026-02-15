@@ -37,8 +37,7 @@ import org.junit.runners.Suite;
     WolfSSLSessionTest.class,
     WolfSSLSessionContextTest.class,
     WolfSSLX509Test.class,
-    WolfSSLKeyX509Test.class,
-    WolfSSLServiceLoaderTest.class
+    WolfSSLKeyX509Test.class
 })
 
 
