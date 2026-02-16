@@ -1063,9 +1063,15 @@ public class WolfSSLEngine extends SSLEngine {
                 default:
                     /* Throw SSLHandshakeException if handshake not finished */
                     if (!this.handshakeFinished) {
-                        throw new SSLHandshakeException(
+                        SSLHandshakeException hse = new SSLHandshakeException(
                             "SSL/TLS handshake error in read: " + ret +
                             " , err = " + err);
+                        Exception verifyEx =
+                            engineHelper.getLastVerifyException();
+                        if (verifyEx != null) {
+                            hse.initCause(verifyEx);
+                        }
+                        throw hse;
                     }
                     throw new SSLException(
                         "wolfSSL_read() error: " + ret + " , err = " + err);
@@ -1406,9 +1412,16 @@ public class WolfSSLEngine extends SSLEngine {
                              * finished, otherwise throw SSLException for
                              * post-handshake errors */
                             if (!this.handshakeFinished) {
-                                throw new SSLHandshakeException(
+                                SSLHandshakeException hse =
+                                    new SSLHandshakeException(
                                     "SSL/TLS handshake error, ret:err = " +
                                     ret + " : " + err);
+                                Exception verifyEx =
+                                    engineHelper.getLastVerifyException();
+                                if (verifyEx != null) {
+                                    hse.initCause(verifyEx);
+                                }
+                                throw hse;
                             }
                             throw new SSLException(
                                 "wolfSSL error, ret:err = " + ret + " : " +

@@ -50,6 +50,11 @@ public class WolfSSLInternalVerifyCb implements WolfSSLVerifyCallback {
     private boolean clientMode;
     private WolfSSLParameters params = null;
 
+    /* Stores the last exception thrown by TrustManager during
+     * certificate verification, so it can be chained as the cause
+     * of SSLHandshakeException thrown to the application */
+    private Exception verifyException = null;
+
     /* Use WeakReference for SSLSocket and SSLEngine to avoid
      * holding back garbage collection of WolfSSLSocket/WolfSSLEngine
      * objects */
@@ -92,6 +97,20 @@ public class WolfSSLInternalVerifyCb implements WolfSSLVerifyCallback {
         this.callingEngine = null;
         this.params = null;
         this.tm = null;
+        this.verifyException = null;
+    }
+
+    /**
+     * Get the last exception thrown by TrustManager during certificate
+     * verification. This allows callers to chain it as the cause of
+     * SSLHandshakeException for better compatibility with applications
+     * that inspect exception cause chains (e.g., expecting
+     * CertificateException as the cause of SSLHandshakeException).
+     *
+     * @return the last verification exception, or null if none
+     */
+    public Exception getVerifyException() {
+        return this.verifyException;
     }
 
     /**
@@ -261,7 +280,10 @@ public class WolfSSLInternalVerifyCb implements WolfSSLVerifyCallback {
                 }
             }
         } catch (Exception e) {
-            /* TrustManager rejected certificate, not valid */
+            /* TrustManager rejected certificate, not valid.
+             * Store exception so it can be chained as cause of
+             * SSLHandshakeException for application compatibility */
+            this.verifyException = e;
             WolfSSLDebug.log(getClass(), WolfSSLDebug.INFO,
                 () -> "TrustManager rejected certificates, verification " +
                 "failed: " + e.getMessage());

@@ -1598,8 +1598,15 @@ public class WolfSSLSocket extends SSLSocket {
 
             if (ret != WolfSSL.SSL_SUCCESS) {
                 close();
-                throw new SSLHandshakeException(errStr + " (error code: " +
+                SSLHandshakeException hse = new SSLHandshakeException(
+                    errStr + " (error code: " +
                     err + ", TID " + Thread.currentThread().getId() + ")");
+                Exception verifyEx = (EngineHelper != null) ?
+                    EngineHelper.getLastVerifyException() : null;
+                if (verifyEx != null) {
+                    hse.initCause(verifyEx);
+                }
+                throw hse;
             }
 
             WolfSSLDebug.log(getClass(), WolfSSLDebug.INFO,

@@ -1678,6 +1678,20 @@ public class WolfSSLEngineHelper {
     }
 
     /**
+     * Get the last exception from TrustManager certificate verification.
+     * Used to chain as the cause of SSLHandshakeException for better
+     * application compatibility.
+     *
+     * @return the last verification exception, or null if none
+     */
+    protected synchronized Exception getLastVerifyException() {
+        if (this.wicb != null) {
+            return this.wicb.getVerifyException();
+        }
+        return null;
+    }
+
+    /**
      * Clear internal state of this WolfSSLEngineHelper.
      */
     protected synchronized void clearObjectState() {
