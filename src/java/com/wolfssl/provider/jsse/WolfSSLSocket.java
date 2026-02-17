@@ -1597,12 +1597,14 @@ public class WolfSSLSocket extends SSLSocket {
             }
 
             if (ret != WolfSSL.SSL_SUCCESS) {
+                /* Save verify exception before close(), which nullifies
+                 * EngineHelper and would lose the stored exception */
+                Exception verifyEx = (EngineHelper != null) ?
+                    EngineHelper.getLastVerifyException() : null;
                 close();
                 SSLHandshakeException hse = new SSLHandshakeException(
                     errStr + " (error code: " +
                     err + ", TID " + Thread.currentThread().getId() + ")");
-                Exception verifyEx = (EngineHelper != null) ?
-                    EngineHelper.getLastVerifyException() : null;
                 if (verifyEx != null) {
                     hse.initCause(verifyEx);
                 }
