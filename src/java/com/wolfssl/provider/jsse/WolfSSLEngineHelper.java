@@ -476,6 +476,19 @@ public class WolfSSLEngineHelper {
     }
 
     /**
+     * Get the last exception from TrustManager certificate verification.
+     * Delegates to the internal verify callback if available.
+     *
+     * @return Exception from last failed verification, or null
+     */
+    protected synchronized Exception getLastVerifyException() {
+        if (this.wicb != null) {
+            return this.wicb.getVerifyException();
+        }
+        return null;
+    }
+
+    /**
      * Get all supported cipher suites in native wolfSSL library, which
      * are also allowed by "wolfjsse.enabledCipherSuites" system Security
      * property, if set.
