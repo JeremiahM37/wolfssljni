@@ -125,6 +125,7 @@ import com.wolfssl.WolfSSLException;
     public void testSocketConnectException();
     public void testSocketCloseInterruptsWrite();
     public void testSocketCloseInterruptsRead();
+    public void testSSLHandshakeExceptionCauseChain();
  */
 public class WolfSSLSocketTest {
 
@@ -1244,9 +1245,7 @@ public class WolfSSLSocketTest {
                     InputStream consumed = new ByteArrayInputStream(tmp);
 
                     /* create SSLSocket for server from Socket */
-                    SSLSocket ss =
-                        (SSLSocket)(
-                            (WolfSSLSocketFactory)ctx.getSocketFactory())
+                    SSLSocket ss = (SSLSocket)((WolfSSLSocketFactory)ctx.getSocketFactory())
                         .createSocket(server, consumed, true);
 
                     ss.startHandshake();
@@ -1997,11 +1996,9 @@ public class WolfSSLSocketTest {
             System.out.print("\tTLS 1.0 extended Socket test");
             protocolConnectionTestExtendedSocket("TLSv1");
 
-            /* restore system property if it was originally set */
-            if (originalProperty != null) {
-                Security.setProperty(
-                    "jdk.tls.disabledAlgorithms", originalProperty);
-            }
+            /* restore system property */
+            Security.setProperty(
+                "jdk.tls.disabledAlgorithms", originalProperty);
         }
     }
 
@@ -2028,11 +2025,9 @@ public class WolfSSLSocketTest {
             System.out.print("\tTLS 1.1 extended Socket test");
             protocolConnectionTestExtendedSocket("TLSv1.1");
 
-            /* restore system property if it was originally set */
-            if (originalProperty != null) {
-                Security.setProperty(
-                    "jdk.tls.disabledAlgorithms", originalProperty);
-            }
+            /* restore system property */
+            Security.setProperty(
+                "jdk.tls.disabledAlgorithms", originalProperty);
         }
     }
 
@@ -3436,12 +3431,12 @@ public class WolfSSLSocketTest {
     public void testAutoSNIProperty() throws Exception {
         System.out.print("\tTesting autoSNI property");
 
-        /* Save original System property value */
-        String originalProp = System.getProperty("wolfjsse.autoSNI");
+        /* Save original Security property value */
+        String originalProp = Security.getProperty("wolfjsse.autoSNI");
 
         try {
             /* Test with autoSNI enabled */
-            System.setProperty("wolfjsse.autoSNI", "true");
+            Security.setProperty("wolfjsse.autoSNI", "true");
 
             /* Create new CTX */
             this.ctx = tf.createSSLContext("TLS", ctxProvider);
@@ -3451,8 +3446,7 @@ public class WolfSSLSocketTest {
                 .createServerSocket(0);
 
             /* Set up test arguments without explicit SNI configuration.
-             * With autoSNI=true, SNI should be automatically set based on
-             * hostname */
+            * With autoSNI=true, SNI should be automatically set based on hostname */
             TestArgs sArgs = new TestArgs(null,
                             null, true,
                             true,
@@ -3468,12 +3462,11 @@ public class WolfSSLSocketTest {
             CountDownLatch sDoneLatch = new CountDownLatch(1);
             CountDownLatch cDoneLatch = new CountDownLatch(1);
 
-            TestServer server =
-                new TestServer(this.ctx, ss, sArgs, 1, sDoneLatch);
+            TestServer server = new TestServer(this.ctx, ss, sArgs, 1, sDoneLatch);
             server.start();
 
-            TestClient client =
-                new TestClient(this.ctx, ss.getLocalPort(), cArgs, cDoneLatch);
+            TestClient client = new TestClient(this.ctx, ss.getLocalPort(), cArgs,
+                cDoneLatch);
             client.start();
 
             cDoneLatch.await();
@@ -3490,7 +3483,7 @@ public class WolfSSLSocketTest {
             }
 
             /* Test with autoSNI disabled */
-            System.setProperty("wolfjsse.autoSNI", "false");
+            Security.setProperty("wolfjsse.autoSNI", "false");
 
             ss = (SSLServerSocket)ctx.getServerSocketFactory()
                 .createServerSocket(0);
@@ -3524,9 +3517,9 @@ public class WolfSSLSocketTest {
         } finally {
             /* Restore original property value */
             if (originalProp != null) {
-                System.setProperty("wolfjsse.autoSNI", originalProp);
+                Security.setProperty("wolfjsse.autoSNI", originalProp);
             } else {
-                System.setProperty("wolfjsse.autoSNI", "true");
+                Security.setProperty("wolfjsse.autoSNI", "true");
             }
         }
     }
@@ -3536,16 +3529,14 @@ public class WolfSSLSocketTest {
 
         System.out.print("\tTesting SNI Matchers");
 
-        /* SNI matcher functionality requires wolfSSL 5.7.6 or later.
+        /* SNI matcher functionality requires wolfSSL 5.7.2 or later.
          * Older versions have a limitation where wolfSSL_SNI_GetRequest()
          * only returns SNI data if native wolfSSL already matched it, but
          * wolfJSSE relies on retrieving the SNI to do matching at the Java
-         * level. wolfSSL 5.7.2 added an ignoreStatus parameter to
-         * TLSX_SNI_GetRequest(), and wolfSSL 5.7.6 enabled
-         * WOLFSSL_ALWAYS_KEEP_SNI by default with --enable-jni (PR 8283),
-         * which is required for full SNI matcher rejection behavior. */
+         * level. This was fixed in wolfSSL 5.7.2 by adding an ignoreStatus
+         * parameter to TLSX_SNI_GetRequest(). */
         long libVerHex = WolfSSL.getLibVersionHex();
-        if (libVerHex < 0x05007006L) {
+        if (libVerHex < 0x05007002L) {
             System.out.println("\t\t... skipped");
             return;
         }
@@ -3991,8 +3982,7 @@ public class WolfSSLSocketTest {
                 if (sock instanceof com.wolfssl.provider.jsse.WolfSSLSocket) {
                     try {
                         Field sslField =
-                            com.wolfssl.provider.jsse
-                                .WolfSSLSocket.class.getDeclaredField("ssl");
+                            com.wolfssl.provider.jsse.WolfSSLSocket.class.getDeclaredField("ssl");
                         sslField.setAccessible(true);
                         sslField.set(sock, null);
 
@@ -4097,15 +4087,6 @@ public class WolfSSLSocketTest {
         String intCaCert = "examples/certs/intermediate/ca-int-ecc-cert.pem";
         String int2CaCert =
             "examples/certs/intermediate/ca-int2-ecc-cert.pem";
-        String serverEccJKS = "examples/provider/server-ecc.jks";
-
-        if (WolfSSLTestFactory.isAndroid()) {
-            serverIntCert = "/data/local/tmp/" + serverIntCert;
-            serverIntKey = "/data/local/tmp/" + serverIntKey;
-            intCaCert = "/data/local/tmp/" + intCaCert;
-            int2CaCert = "/data/local/tmp/" + int2CaCert;
-            serverEccJKS = "/data/local/tmp/examples/provider/server-ecc.bks";
-        }
 
         X509TrustManager customTM = new X509TrustManager() {
             @Override
@@ -4179,7 +4160,7 @@ public class WolfSSLSocketTest {
         fis.close();
 
         /* Create KeyStore and add server cert with chain */
-        KeyStore serverKeyStore = KeyStore.getInstance(tf.keyStoreType);
+        KeyStore serverKeyStore = KeyStore.getInstance("JKS");
         serverKeyStore.load(null, null);
 
         /* Build certificate chain: server, int2 (immediate issuer), int */
@@ -4190,8 +4171,8 @@ public class WolfSSLSocketTest {
 
         /* Load existing ECC private key from server-ecc.jks, since Java
          * doesn't natively support SEC1 ECC format without Bouncy Castle */
-        KeyStore tmpKS = KeyStore.getInstance(tf.keyStoreType);
-        fis = new FileInputStream(serverEccJKS);
+        KeyStore tmpKS = KeyStore.getInstance("JKS");
+        fis = new FileInputStream("examples/provider/server-ecc.jks");
         tmpKS.load(fis, "wolfSSL test".toCharArray());
         fis.close();
 
@@ -4320,6 +4301,95 @@ public class WolfSSLSocketTest {
             orderCorrect[0]);
 
         System.out.println("\t\t... passed");
+    }
+
+    @Test
+    public void testSSLHandshakeExceptionCauseChain()
+        throws NoSuchProviderException, NoSuchAlgorithmException,
+               KeyManagementException, KeyStoreException,
+               CertificateException, IOException,
+               UnrecoverableKeyException, InterruptedException,
+               java.util.concurrent.ExecutionException {
+
+        System.out.print("\tSSLHandshakeException cause chain");
+
+        /* Create server context with valid certs */
+        SSLContext srvCtx = tf.createSSLContext("TLS", ctxProvider);
+
+        /* Create client context with rejecting TrustManager.
+         * When checkServerTrusted() throws CertificateException,
+         * wolfJSSE should preserve it as the cause of
+         * SSLHandshakeException thrown from startHandshake(). */
+        final String rejectMsg = "Intentional test rejection";
+        TrustManager[] rejectingTMs = { new X509TrustManager() {
+            @Override
+            public void checkClientTrusted(X509Certificate[] chain,
+                String authType) throws CertificateException {
+            }
+            @Override
+            public void checkServerTrusted(X509Certificate[] chain,
+                String authType) throws CertificateException {
+                throw new CertificateException(rejectMsg);
+            }
+            @Override
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+        }};
+
+        SSLContext cliCtx = SSLContext.getInstance("TLS", "wolfJSSE");
+        cliCtx.init(null, rejectingTMs, null);
+
+        /* Create server socket on ephemeral port */
+        SSLServerSocket ss = (SSLServerSocket)srvCtx
+            .getServerSocketFactory().createServerSocket(0);
+
+        SSLSocket cs = (SSLSocket)cliCtx.getSocketFactory().createSocket();
+        cs.connect(new InetSocketAddress(
+            InetAddress.getLocalHost(), ss.getLocalPort()));
+
+        final SSLSocket server = (SSLSocket)ss.accept();
+
+        ExecutorService es = Executors.newSingleThreadExecutor();
+        Future<Void> serverFuture = es.submit(new Callable<Void>() {
+            @Override
+            public Void call() throws Exception {
+                try {
+                    server.startHandshake();
+                } catch (SSLException e) {
+                    /* expected, client will reject server cert */
+                }
+                return null;
+            }
+        });
+
+        try {
+            cs.startHandshake();
+            System.out.println("\t... failed");
+            fail("Expected SSLHandshakeException from rejecting " +
+                 "TrustManager");
+        } catch (SSLHandshakeException e) {
+            /* Verify the cause chain preserves CertificateException */
+            Throwable cause = e.getCause();
+            assertNotNull(
+                "SSLHandshakeException cause should not be null",
+                cause);
+            assertTrue(
+                "Cause should be CertificateException, got: " +
+                cause.getClass().getName(),
+                cause instanceof CertificateException);
+            assertEquals(
+                "CertificateException message mismatch",
+                rejectMsg, cause.getMessage());
+        }
+
+        es.shutdown();
+        serverFuture.get();
+        cs.close();
+        server.close();
+        ss.close();
+
+        System.out.println("\t... passed");
     }
 }
 
