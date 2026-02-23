@@ -331,8 +331,9 @@ public class WolfSSLAuthStore {
             return null;
         }
 
-        /* Return new session if in server mode, or if host is null */
-        if (!clientMode || host == null) {
+        /* Unknown port (-1) is a valid SSLEngine host hint.
+         * Skip cache keying. */
+        if (!clientMode || host == null || port < 0) {
             return this.getSession(ssl, clientMode, host, port);
         }
 
@@ -758,14 +759,20 @@ public class WolfSSLAuthStore {
                     diff = (now - current.creation.getTime()) / 1000;
 
                     if (diff < 0) {
-                    /* session is from the future ... */ //@TODO
+                    /* session is from the future ... */ /* TODO */
 
                     }
 
-                    if (in > 0 && diff > in) {
+                    if (in > 0 && diff >= in) {
                         current.invalidate();
                     }
-                    current.setNativeTimeout(in);
+                    try {
+                        current.setNativeTimeout(in);
+                    } catch (IllegalStateException e) {
+                        /* Native WolfSSLSession has been freed,
+                         * invalidate this session entry */
+                        current.invalidate();
+                    }
                 }
             }
         }
@@ -803,4 +810,3 @@ public class WolfSSLAuthStore {
         super.finalize();
     }
 }
-

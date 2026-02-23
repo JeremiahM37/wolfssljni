@@ -542,6 +542,239 @@ public class WolfSSLSessionContextTest {
         }
     }
 
+    @Test
+    public void testSessionTimeoutBoundaryExpiry()
+        throws NoSuchProviderException, NoSuchAlgorithmException,
+               KeyManagementException, KeyStoreException, CertificateException,
+               IOException, UnrecoverableKeyException,
+               NoSuchAlgorithmException {
+
+        SSLEngine server;
+        SSLEngine client;
+        int ret;
+        SSLSession ses;
+        SSLSessionContext sesCtx;
+
+        /* Regression: session must expire at exactly the
+         * timeout boundary (diff >= timeout, not diff > timeout) */
+        System.out.print("\tTesting session timeout boundary");
+
+        String originalProp = Security.getProperty(
+            "wolfjsse.clientSessionCache.disabled");
+        Security.setProperty("wolfjsse.clientSessionCache.disabled",
+            "false");
+
+        try {
+            this.ctx = tf.createSSLContext("TLS", engineProvider);
+            server = this.ctx.createSSLEngine();
+            client = this.ctx.createSSLEngine(
+                "wolfSSL timeout test", 11111);
+
+            server.setUseClientMode(false);
+            server.setNeedClientAuth(false);
+            client.setUseClientMode(true);
+
+            try {
+                server.beginHandshake();
+                client.beginHandshake();
+            } catch (SSLException e) {
+                error("\t... failed");
+                fail("failed to begin handshake");
+            }
+
+            ret = tf.testConnection(server, client, null, null,
+                "timeout boundary test");
+            if (ret != 0) {
+                error("\t... failed");
+                fail("failed to create connection");
+            }
+
+            ses = server.getSession();
+            if (ses == null || !ses.isValid()) {
+                error("\t... failed");
+                fail("session should be valid after handshake");
+            }
+
+            /* Set timeout to 1 second */
+            sesCtx = ses.getSessionContext();
+            sesCtx.setSessionTimeout(1);
+
+            /* Sleep just over 1 second to ensure we cross the
+             * timeout boundary */
+            try {
+                Thread.sleep(1200);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+
+            /* Session should be expired; getIds() triggers
+             * updateTimeouts() which invalidates it */
+            byte[] sessionId = ses.getId();
+
+            /* getIds() triggers timeout evaluation and filters
+             * expired sessions */
+            boolean found = false;
+            Enumeration<byte[]> ids = sesCtx.getIds();
+            while (ids.hasMoreElements()) {
+                byte[] id = ids.nextElement();
+                if (Arrays.equals(id, sessionId)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) {
+                error("\t... failed");
+                fail("expired session should not appear in getIds()");
+            }
+
+            /* After updateTimeouts ran via getIds(), session should
+             * also report as invalid */
+            if (ses.isValid()) {
+                error("\t... failed");
+                fail("session should be invalid after timeout");
+            }
+
+            try {
+                tf.CloseConnection(server, client, false);
+            } catch (SSLException e1) {
+                e1.printStackTrace();
+                error("\t... failed");
+                fail("session close failed");
+            }
+
+            pass("\t... passed");
+
+        } finally {
+            if (originalProp != null && !originalProp.isEmpty()) {
+                Security.setProperty(
+                    "wolfjsse.clientSessionCache.disabled",
+                    originalProp);
+            }
+        }
+    }
+
+    @Test
+    public void testSessionInvalidationFilteredFromGetIds()
+        throws NoSuchProviderException, NoSuchAlgorithmException,
+               KeyManagementException, KeyStoreException, CertificateException,
+               IOException, UnrecoverableKeyException,
+               NoSuchAlgorithmException {
+
+        SSLEngine server;
+        SSLEngine client;
+        int ret;
+        SSLSession ses;
+        SSLSessionContext sesCtx;
+
+        /* Regression: invalidated sessions must be filtered
+         * from getIds() and getSession(). */
+        System.out.print("\tTesting invalidation filtered from getIds");
+
+        String originalProp = Security.getProperty(
+            "wolfjsse.clientSessionCache.disabled");
+        Security.setProperty("wolfjsse.clientSessionCache.disabled",
+            "false");
+
+        try {
+            this.ctx = tf.createSSLContext("TLS", engineProvider);
+            server = this.ctx.createSSLEngine();
+            client = this.ctx.createSSLEngine(
+                "wolfSSL invalidation test", 11111);
+
+            server.setUseClientMode(false);
+            server.setNeedClientAuth(false);
+            client.setUseClientMode(true);
+
+            try {
+                server.beginHandshake();
+                client.beginHandshake();
+            } catch (SSLException e) {
+                error("\t... failed");
+                fail("failed to begin handshake");
+            }
+
+            ret = tf.testConnection(server, client, null, null,
+                "invalidation test");
+            if (ret != 0) {
+                error("\t... failed");
+                fail("failed to create connection");
+            }
+
+            ses = server.getSession();
+            if (ses == null || !ses.isValid()) {
+                error("\t... failed");
+                fail("session should be valid after handshake");
+            }
+
+            byte[] sessionId = ses.getId();
+            sesCtx = ses.getSessionContext();
+
+            /* Verify session is in getIds() before invalidation */
+            boolean foundBefore = false;
+            Enumeration<byte[]> ids = sesCtx.getIds();
+            while (ids.hasMoreElements()) {
+                byte[] id = ids.nextElement();
+                if (Arrays.equals(id, sessionId)) {
+                    foundBefore = true;
+                    break;
+                }
+            }
+            if (!foundBefore) {
+                error("\t... failed");
+                fail("session should be in getIds() before invalidation");
+            }
+
+            /* Invalidate the session */
+            ses.invalidate();
+
+            if (ses.isValid()) {
+                error("\t... failed");
+                fail("session should not be valid after invalidation");
+            }
+
+            /* Verify invalidated session is NOT in getIds() */
+            boolean foundAfter = false;
+            ids = sesCtx.getIds();
+            while (ids.hasMoreElements()) {
+                byte[] id = ids.nextElement();
+                if (Arrays.equals(id, sessionId)) {
+                    foundAfter = true;
+                    break;
+                }
+            }
+            if (foundAfter) {
+                error("\t... failed");
+                fail("invalidated session should not appear in getIds()");
+            }
+
+            /* Verify getSession() does not return the
+             * invalidated session */
+            SSLSession retrieved = sesCtx.getSession(sessionId);
+            if (retrieved != null && retrieved.isValid()) {
+                error("\t... failed");
+                fail("getSession() should not return valid " +
+                     "invalidated session");
+            }
+
+            try {
+                tf.CloseConnection(server, client, false);
+            } catch (SSLException e1) {
+                e1.printStackTrace();
+                error("\t... failed");
+                fail("session close failed");
+            }
+
+            pass("\t... passed");
+
+        } finally {
+            if (originalProp != null && !originalProp.isEmpty()) {
+                Security.setProperty(
+                    "wolfjsse.clientSessionCache.disabled",
+                    originalProp);
+            }
+        }
+    }
+
     private void pass(String msg) {
         WolfSSLTestFactory.pass(msg);
     }
