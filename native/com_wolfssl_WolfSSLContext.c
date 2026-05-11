@@ -859,6 +859,9 @@ JNIEXPORT jint JNICALL Java_com_wolfssl_WolfSSLContext_setCipherList
     }
 
     cipherList = (*jenv)->GetStringUTFChars(jenv, list, 0);
+    if (cipherList == NULL) {
+        return (jint)MEMORY_E;
+    }
 
     ret = (jint) wolfSSL_CTX_set_cipher_list(ctx, cipherList);
 
@@ -1179,6 +1182,7 @@ int NativeIORecvCb(WOLFSSL *ssl, char *buf, int sz, void *ctx)
     if (!g_sslIORecvMethodId) {
         (*jenv)->ThrowNew(jenv, excClass,
             "Cached recv callback method ID is null in NativeIORecvCb");
+        (*jenv)->DeleteLocalRef(jenv, ctxRef);
         if (needsDetach)
             (*g_vm)->DetachCurrentThread(g_vm);
         return WOLFSSL_CBIO_ERR_GENERAL;
@@ -1782,9 +1786,14 @@ JNIEXPORT jint JNICALL Java_com_wolfssl_WolfSSLContext_setCRLCb
             }
             (*jenv)->ThrowNew(jenv, excClass,
                     "error storing global missing CTX CRL callback interface");
+            return (jint)SSL_FAILURE;
         }
 
         ret = wolfSSL_CTX_SetCRL_Cb(ctx, NativeCtxMissingCRLCallback);
+    }
+    else {
+        /* clear native callback when Java side is disabling */
+        ret = wolfSSL_CTX_SetCRL_Cb(ctx, NULL);
     }
 
     return (jint)ret;
@@ -1952,6 +1961,9 @@ JNIEXPORT jint JNICALL Java_com_wolfssl_WolfSSLContext_setOCSPOverrideUrl
     }
 
     url = (*jenv)->GetStringUTFChars(jenv, urlString, 0);
+    if (url == NULL) {
+        return (jint)MEMORY_E;
+    }
 
     ret = (jint) wolfSSL_CTX_SetOCSP_OverrideURL(ctx, url);
 
@@ -6766,6 +6778,9 @@ JNIEXPORT jint JNICALL Java_com_wolfssl_WolfSSLContext_set1SigAlgsList
     }
 
     sigAlgList = (*jenv)->GetStringUTFChars(jenv, list, 0);
+    if (sigAlgList == NULL) {
+        return (jint)MEMORY_E;
+    }
 
     ret = wolfSSL_CTX_set1_sigalgs_list(ctx, sigAlgList);
 

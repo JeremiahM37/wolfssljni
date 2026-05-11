@@ -2470,6 +2470,9 @@ JNIEXPORT jint JNICALL Java_com_wolfssl_WolfSSLSession_setCipherList
     }
 
     cipherList= (*jenv)->GetStringUTFChars(jenv, list, 0);
+    if (cipherList == NULL) {
+        return (jint)MEMORY_E;
+    }
 
     ret = (jint) wolfSSL_set_cipher_list(ssl, cipherList);
 
@@ -6380,6 +6383,9 @@ JNIEXPORT jint JNICALL Java_com_wolfssl_WolfSSLSession_set1SigAlgsList
     }
 
     sigAlgList = (*jenv)->GetStringUTFChars(jenv, list, 0);
+    if (sigAlgList == NULL) {
+        return (jint)MEMORY_E;
+    }
 
     ret = wolfSSL_set1_sigalgs_list(ssl, sigAlgList);
 
